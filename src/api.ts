@@ -1,6 +1,8 @@
 import "isomorphic-unfetch";
 import _ from "lodash";
+import fetch, { RequestInit, Response } from "node-fetch";
 import * as QueryString from "query-string";
+import { SocksProxyAgent } from "socks-proxy-agent";
 import {
   API_BASE_MAINNET,
   API_BASE_RINKEBY,
@@ -50,7 +52,9 @@ export class OpenSeaAPI {
    */
   public logger: (arg: string) => void;
 
-  private apiKey: string | undefined;
+  private apiKeys: string[] | undefined;
+
+  private proxies: string[] | undefined;
 
   /**
    * Create an instance of the OpenSea API
@@ -58,7 +62,8 @@ export class OpenSeaAPI {
    * @param logger Optional function for logging debug strings before and after requests are made
    */
   constructor(config: OpenSeaAPIConfig, logger?: (arg: string) => void) {
-    this.apiKey = config.apiKey;
+    this.apiKeys = config.apiKeys;
+    this.proxies = config.proxies;
 
     switch (config.networkName) {
       case Network.Rinkeby:
@@ -332,7 +337,7 @@ export class OpenSeaAPI {
     const url = `${apiPath}?${qs}`;
 
     const response = await this._fetch(url);
-    return response.json();
+    return <Promise<any>>response.json();
   }
 
   /**
@@ -358,7 +363,7 @@ export class OpenSeaAPI {
     };
 
     const response = await this._fetch(apiPath, fetchOpts);
-    return response.json();
+    return <Promise<any>>response.json();
   }
 
   /**
@@ -380,9 +385,16 @@ export class OpenSeaAPI {
    * @param apiPath Path to URL endpoint under API
    * @param opts RequestInit opts, similar to Fetch API
    */
-  private async _fetch(apiPath: string, opts: RequestInit = {}) {
+  private async _fetch(apiPath: string, opts: RequestInit = {}, threadId = 0) {
     const apiBase = this.apiBaseUrl;
-    const apiKey = this.apiKey;
+    const apiKey =
+      this.apiKeys && this.apiKeys.length > threadId
+        ? this.apiKeys[threadId]
+        : undefined;
+    const proxy =
+      this.proxies && this.proxies.length > threadId
+        ? this.proxies[threadId]
+        : undefined;
     const finalUrl = apiBase + apiPath;
     const finalOpts = {
       ...opts,
@@ -391,6 +403,11 @@ export class OpenSeaAPI {
         ...(opts.headers || {}),
       },
     };
+
+    if (proxy) {
+      const proxyAgent = new SocksProxyAgent(proxy);
+      finalOpts.agent = proxyAgent;
+    }
 
     this.logger(
       `Sending request: ${finalUrl} ${JSON.stringify(finalOpts).substr(

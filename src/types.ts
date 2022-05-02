@@ -88,14 +88,15 @@ export interface EventData {
 
 /**
  * OpenSea API configuration object
- * @param apiKey Optional key to use for API
+ * @param apiKeys Optional keys array to use for API
  * @param networkName `Network` type to use. Defaults to `Network.Main` (mainnet)
  * @param gasPrice Default gas price to send to the Wyvern Protocol
  * @param apiBaseUrl Optional base URL to use for the API
  */
 export interface OpenSeaAPIConfig {
   networkName?: Network;
-  apiKey?: string;
+  apiKeys?: string[];
+  proxies?: string[];
   apiBaseUrl?: string;
   useReadOnlyProvider?: boolean;
   // Sent to WyvernJS

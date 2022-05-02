@@ -7,7 +7,7 @@ export const RINKEBY_API_KEY = process.env.API_KEY;
 
 export const mainApi = new OpenSeaAPI(
   {
-    apiKey: MAINNET_API_KEY,
+    apiKeys: MAINNET_API_KEY ? [MAINNET_API_KEY] : [],
     networkName: Network.Main,
   },
   console.info
@@ -15,7 +15,7 @@ export const mainApi = new OpenSeaAPI(
 
 export const rinkebyApi = new OpenSeaAPI(
   {
-    apiKey: RINKEBY_API_KEY,
+    apiKeys: RINKEBY_API_KEY ? [RINKEBY_API_KEY] : [],
     networkName: Network.Rinkeby,
   },
   console.info

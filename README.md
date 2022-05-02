@@ -91,7 +91,8 @@ const provider = new Web3.providers.HttpProvider('https://mainnet.infura.io')
 
 const seaport = new OpenSeaPort(provider, {
   networkName: Network.Main,
-  apiKey: YOUR_API_KEY
+  apiKeys: [ YOUR_API_KEY ],
+  proxies: [ YOUR_PROXY ]
 })
 ```
 
