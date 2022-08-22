@@ -29,7 +29,7 @@ const client = new OpenSeaPort(
   provider,
   {
     networkName: Network.Main,
-    apiKeys: MAINNET_API_KEY ? [MAINNET_API_KEY] : [],
+    apiKey: MAINNET_API_KEY,
   },
   (line) => console.info(`MAINNET: ${line}`)
 );
@@ -38,7 +38,7 @@ const rinkebyClient = new OpenSeaPort(
   rinkebyProvider,
   {
     networkName: Network.Rinkeby,
-    apiKeys: RINKEBY_API_KEY ? [RINKEBY_API_KEY] : [],
+    apiKey: RINKEBY_API_KEY,
   },
   (line) => console.info(`RINKEBY: ${line}`)
 );

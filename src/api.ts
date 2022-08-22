@@ -52,9 +52,9 @@ export class OpenSeaAPI {
    */
   public logger: (arg: string) => void;
 
-  private apiKeys: string[] | undefined;
+  private apiKey: string | undefined;
 
-  private proxies: string[] | undefined;
+  private proxy: string | undefined;
 
   /**
    * Create an instance of the OpenSea API
@@ -62,8 +62,8 @@ export class OpenSeaAPI {
    * @param logger Optional function for logging debug strings before and after requests are made
    */
   constructor(config: OpenSeaAPIConfig, logger?: (arg: string) => void) {
-    this.apiKeys = config.apiKeys;
-    this.proxies = config.proxies;
+    this.apiKey = config.apiKey;
+    this.proxy = config.proxy;
 
     switch (config.networkName) {
       case Network.Rinkeby:
@@ -385,16 +385,10 @@ export class OpenSeaAPI {
    * @param apiPath Path to URL endpoint under API
    * @param opts RequestInit opts, similar to Fetch API
    */
-  private async _fetch(apiPath: string, opts: RequestInit = {}, threadId = 0) {
+  private async _fetch(apiPath: string, opts: RequestInit = {}) {
     const apiBase = this.apiBaseUrl;
-    const apiKey =
-      this.apiKeys && this.apiKeys.length > threadId
-        ? this.apiKeys[threadId]
-        : undefined;
-    const proxy =
-      this.proxies && this.proxies.length > threadId
-        ? this.proxies[threadId]
-        : undefined;
+    const apiKey = this.apiKey;
+    const proxy = this.proxy;
     const finalUrl = apiBase + apiPath;
     const finalOpts = {
       ...opts,
@@ -407,6 +401,8 @@ export class OpenSeaAPI {
     if (proxy) {
       const proxyAgent = new SocksProxyAgent(proxy);
       finalOpts.agent = proxyAgent;
+
+      //console.warn(`Fetching using proxy: ${proxy}`);
     }
 
     this.logger(

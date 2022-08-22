@@ -29,7 +29,7 @@ const client = new OpenSeaPort(
   provider,
   {
     networkName: Network.Main,
-    apiKeys: MAINNET_API_KEY ? [MAINNET_API_KEY] : [],
+    apiKey: MAINNET_API_KEY,
   },
   (line) => console.info(`MAINNET: ${line}`)
 );
