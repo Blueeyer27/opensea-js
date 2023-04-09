@@ -787,7 +787,7 @@ export class OpenSeaPort {
     // NOTE not in Wyvern exchange code:
     // frontend checks to make sure
     // token is approved and sufficiently available
-    //await this._buyOrderValidationAndApprovals({ order, accountAddress });
+    await this._buyOrderValidationAndApprovals({ order, accountAddress });
     const hashedOrder = {
       ...order,
       hash: getOrderHash(order),

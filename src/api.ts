@@ -1,8 +1,6 @@
 import "isomorphic-unfetch";
 import _ from "lodash";
-import fetch, { RequestInit, Response } from "node-fetch";
 import * as QueryString from "query-string";
-import { SocksProxyAgent } from "socks-proxy-agent";
 import {
   API_BASE_MAINNET,
   API_BASE_RINKEBY,
@@ -54,8 +52,6 @@ export class OpenSeaAPI {
 
   private apiKey: string | undefined;
 
-  private proxy: string | undefined;
-
   /**
    * Create an instance of the OpenSea API
    * @param config OpenSeaAPIConfig for setting up the API, including an optional API key, network name, and base URL
@@ -63,7 +59,6 @@ export class OpenSeaAPI {
    */
   constructor(config: OpenSeaAPIConfig, logger?: (arg: string) => void) {
     this.apiKey = config.apiKey;
-    this.proxy = config.proxy;
 
     switch (config.networkName) {
       case Network.Rinkeby:
@@ -337,7 +332,7 @@ export class OpenSeaAPI {
     const url = `${apiPath}?${qs}`;
 
     const response = await this._fetch(url);
-    return <Promise<any>>response.json();
+    return response.json();
   }
 
   /**
@@ -363,7 +358,7 @@ export class OpenSeaAPI {
     };
 
     const response = await this._fetch(apiPath, fetchOpts);
-    return <Promise<any>>response.json();
+    return response.json();
   }
 
   /**
@@ -388,7 +383,6 @@ export class OpenSeaAPI {
   private async _fetch(apiPath: string, opts: RequestInit = {}) {
     const apiBase = this.apiBaseUrl;
     const apiKey = this.apiKey;
-    const proxy = this.proxy;
     const finalUrl = apiBase + apiPath;
     const finalOpts = {
       ...opts,
@@ -397,13 +391,6 @@ export class OpenSeaAPI {
         ...(opts.headers || {}),
       },
     };
-
-    if (proxy) {
-      const proxyAgent = new SocksProxyAgent(proxy);
-      finalOpts.agent = proxyAgent;
-
-      //console.warn(`Fetching using proxy: ${proxy}`);
-    }
 
     this.logger(
       `Sending request: ${finalUrl} ${JSON.stringify(finalOpts).substr(
