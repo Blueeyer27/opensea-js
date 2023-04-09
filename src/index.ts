@@ -1,17 +1,9 @@
 /* eslint-disable import/no-unused-modules */
 import { OpenSeaAPI } from "./api";
-import { OpenSeaPort } from "./seaport";
+import { OpenSeaSDK } from "./sdk";
 import { Network, EventData, EventType } from "./types";
-export { orderToJSON, orderFromJSON, WyvernProtocol } from "./utils/utils";
-export {
-  encodeCall,
-  encodeSell,
-  encodeAtomicizedBuy,
-  encodeAtomicizedSell,
-  encodeDefaultCall,
-  encodeReplacementPattern,
-  AbiType,
-} from "./utils/schema";
+export { orderToJSON, orderFromJSON } from "./utils/utils";
+export { encodeDefaultCall } from "./utils/schemas/schema";
 
 /**
  * Example setup:
@@ -26,7 +18,9 @@ export {
 
 export {
   // Main SDK export:
-  OpenSeaPort,
+  OpenSeaSDK,
+  // Legacy SDK export:
+  OpenSeaSDK as OpenSeaPort,
   // So the API could be used separately:
   OpenSeaAPI,
   // Useful for serializing and deserializing orders:

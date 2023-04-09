@@ -1,15 +1,34 @@
 import "isomorphic-unfetch";
 import _ from "lodash";
 import * as QueryString from "query-string";
+import { API_BASE_MAINNET, API_BASE_TESTNET, API_PATH } from "./constants";
 import {
-  API_BASE_MAINNET,
-  API_BASE_RINKEBY,
-  API_PATH,
-  ORDERBOOK_PATH,
-  ORDERBOOK_VERSION,
-  SITE_HOST_MAINNET,
-  SITE_HOST_RINKEBY,
-} from "./constants";
+  BuildOfferResponse,
+  FulfillmentDataResponse,
+  GetCollectionResponse,
+  OrderAPIOptions,
+  OrderSide,
+  OrdersPostQueryResponse,
+  OrdersQueryOptions,
+  OrdersQueryResponse,
+  OrderV2,
+  PostOfferResponse,
+  ProtocolData,
+  QueryCursors,
+} from "./orders/types";
+import {
+  serializeOrdersQueryOptions,
+  getOrdersAPIPath,
+  deserializeOrder,
+  getFulfillmentDataPath,
+  getFulfillListingPayload,
+  getFulfillOfferPayload,
+  getBuildOfferPath,
+  getBuildCollectionOfferPayload,
+  getCollectionPath,
+  getPostCollectionOfferPath,
+  getPostCollectionOfferPayload,
+} from "./orders/utils";
 import {
   Network,
   OpenSeaAPIConfig,
@@ -17,26 +36,19 @@ import {
   OpenSeaAssetBundle,
   OpenSeaAssetBundleQuery,
   OpenSeaAssetQuery,
+  OpenSeaCollection,
   OpenSeaFungibleToken,
   OpenSeaFungibleTokenQuery,
-  Order,
-  OrderbookResponse,
-  OrderJSON,
-  OrderQuery,
 } from "./types";
 import {
   assetBundleFromJSON,
   assetFromJSON,
   delay,
-  orderFromJSON,
   tokenFromJSON,
+  collectionFromJSON,
 } from "./utils/utils";
 
 export class OpenSeaAPI {
-  /**
-   * Host url for OpenSea
-   */
-  public readonly hostUrl: string;
   /**
    * Base url for the API
    */
@@ -51,6 +63,8 @@ export class OpenSeaAPI {
   public logger: (arg: string) => void;
 
   private apiKey: string | undefined;
+  private networkName: Network;
+  private retryDelay = 3000;
 
   /**
    * Create an instance of the OpenSea API
@@ -59,16 +73,15 @@ export class OpenSeaAPI {
    */
   constructor(config: OpenSeaAPIConfig, logger?: (arg: string) => void) {
     this.apiKey = config.apiKey;
+    this.networkName = config.networkName ?? Network.Main;
 
     switch (config.networkName) {
-      case Network.Rinkeby:
-        this.apiBaseUrl = config.apiBaseUrl || API_BASE_RINKEBY;
-        this.hostUrl = SITE_HOST_RINKEBY;
+      case Network.Goerli:
+        this.apiBaseUrl = config.apiBaseUrl || API_BASE_TESTNET;
         break;
       case Network.Main:
       default:
         this.apiBaseUrl = config.apiBaseUrl || API_BASE_MAINNET;
-        this.hostUrl = SITE_HOST_MAINNET;
         break;
     }
 
@@ -77,25 +90,157 @@ export class OpenSeaAPI {
   }
 
   /**
-   * Send an order to the orderbook.
-   * Throws when the order is invalid.
-   * IN NEXT VERSION: change order input to Order type
-   * @param order Order JSON to post to the orderbook
-   * @param retries Number of times to retry if the service is unavailable for any reason
+   * Gets an order from API based on query options. Throws when no order is found.
    */
-  public async postOrder(order: OrderJSON, retries = 2): Promise<Order> {
-    let json;
+  public async getOrder({
+    side,
+    protocol = "seaport",
+    orderDirection = "desc",
+    orderBy = "created_date",
+    ...restOptions
+  }: Omit<OrdersQueryOptions, "limit">): Promise<OrderV2> {
+    const { orders } = await this.get<OrdersQueryResponse>(
+      getOrdersAPIPath(this.networkName, protocol, side),
+      serializeOrdersQueryOptions({
+        limit: 1,
+        orderBy,
+        orderDirection,
+        ...restOptions,
+      })
+    );
+    if (orders.length === 0) {
+      throw new Error("Not found: no matching order found");
+    }
+    return deserializeOrder(orders[0]);
+  }
+
+  /**
+   * Gets a list of orders from API based on query options and returns orders
+   * with next and previous cursors.
+   */
+  public async getOrders({
+    side,
+    protocol = "seaport",
+    orderDirection = "desc",
+    orderBy = "created_date",
+    ...restOptions
+  }: Omit<OrdersQueryOptions, "limit">): Promise<
+    QueryCursors & {
+      orders: OrderV2[];
+    }
+  > {
+    const response = await this.get<OrdersQueryResponse>(
+      getOrdersAPIPath(this.networkName, protocol, side),
+      serializeOrdersQueryOptions({
+        limit: this.pageSize,
+        orderBy,
+        orderDirection,
+        ...restOptions,
+      })
+    );
+    return {
+      ...response,
+      orders: response.orders.map(deserializeOrder),
+    };
+  }
+
+  /**
+   * Generate the data needed to fulfill a listing or an offer
+   */
+  public async generateFulfillmentData(
+    fulfillerAddress: string,
+    orderHash: string,
+    protocolAddress: string,
+    side: OrderSide
+  ): Promise<FulfillmentDataResponse> {
+    let payload = null;
+    if (side === "ask") {
+      payload = getFulfillListingPayload(
+        fulfillerAddress,
+        orderHash,
+        protocolAddress,
+        this.networkName
+      );
+    } else {
+      payload = getFulfillOfferPayload(
+        fulfillerAddress,
+        orderHash,
+        protocolAddress,
+        this.networkName
+      );
+    }
+    const response = await this.post<FulfillmentDataResponse>(
+      getFulfillmentDataPath(side),
+      payload
+    );
+    return response;
+  }
+
+  /**
+   * Send an order to be posted. Throws when the order is invalid.
+   */
+  public async postOrder(
+    order: ProtocolData,
+    apiOptions: OrderAPIOptions,
+    { retries = 2 }: { retries?: number } = {}
+  ): Promise<OrderV2> {
+    let response: OrdersPostQueryResponse;
+    // TODO: Validate apiOptions. Avoid API calls that will definitely fail
+    const { protocol = "seaport", side, protocolAddress } = apiOptions;
     try {
-      json = (await this.post(
-        `${ORDERBOOK_PATH}/orders/post/`,
-        order
-      )) as OrderJSON;
+      response = await this.post<OrdersPostQueryResponse>(
+        getOrdersAPIPath(this.networkName, protocol, side),
+        { ...order, protocol_address: protocolAddress }
+      );
     } catch (error) {
       _throwOrContinue(error, retries);
-      await delay(3000);
-      return this.postOrder(order, retries - 1);
+      await delay(this.retryDelay);
+      return this.postOrder(order, apiOptions, { retries: retries - 1 });
     }
-    return orderFromJSON(json);
+    return deserializeOrder(response.order);
+  }
+
+  /**
+   * Build an offer
+   */
+  public async buildOffer(
+    offererAddress: string,
+    quantity: number,
+    collectionSlug: string
+  ): Promise<BuildOfferResponse> {
+    const payload = getBuildCollectionOfferPayload(
+      offererAddress,
+      quantity,
+      collectionSlug
+    );
+    const response = await this.post<BuildOfferResponse>(
+      getBuildOfferPath(),
+      payload
+    );
+    return response;
+  }
+
+  /**
+   * Post collection offer
+   */
+  public async postCollectionOffer(
+    order: ProtocolData,
+    slug: string,
+    retries = 0
+  ): Promise<PostOfferResponse | null> {
+    const payload = getPostCollectionOfferPayload(slug, order);
+    console.log("Post Order Payload");
+    console.log(JSON.stringify(payload, null, 4));
+    try {
+      return await this.post<PostOfferResponse>(
+        getPostCollectionOfferPath(),
+        payload
+      );
+    } catch (error) {
+      _throwOrContinue(error, retries);
+      await delay(1000);
+      return this.postCollectionOffer(order, slug, retries - 1);
+    }
   }
 
   /**
@@ -120,79 +265,6 @@ export class OpenSeaAPI {
     );
 
     return !!json.success;
-  }
-
-  /**
-   * Get which version of Wyvern exchange to use to create orders
-   * Simply return null in case API doesn't give us a good response
-   */
-  public async getOrderCreateWyvernExchangeAddress(): Promise<string | null> {
-    try {
-      const result = await this.get(`${ORDERBOOK_PATH}/exchange/`);
-      return result as string;
-    } catch (error) {
-      this.logger(
-        "Couldn't retrieve Wyvern exchange address for order creation"
-      );
-      return null;
-    }
-  }
-  /**
-   * Get an order from the orderbook, throwing if none is found.
-   * @param query Query to use for getting orders. A subset of parameters
-   *  on the `OrderJSON` type is supported
-   */
-  public async getOrder(query: OrderQuery): Promise<Order> {
-    const result = await this.get(`${ORDERBOOK_PATH}/orders/`, {
-      limit: 1,
-      ...query,
-    });
-
-    let orderJSON;
-    if (ORDERBOOK_VERSION == 0) {
-      const json = result as OrderJSON[];
-      orderJSON = json[0];
-    } else {
-      const json = result as OrderbookResponse;
-      orderJSON = json.orders[0];
-    }
-    if (!orderJSON) {
-      throw new Error(`Not found: no matching order found`);
-    }
-    return orderFromJSON(orderJSON);
-  }
-
-  /**
-   * Get a list of orders from the orderbook, returning the page of orders
-   *  and the count of total orders found.
-   * @param query Query to use for getting orders. A subset of parameters
-   *  on the `OrderJSON` type is supported
-   * @param page Page number, defaults to 1. Can be overridden by
-   * `limit` and `offset` attributes from OrderQuery
-   */
-  public async getOrders(
-    query: OrderQuery = {},
-    page = 1
-  ): Promise<{ orders: Order[]; count: number }> {
-    const result = await this.get(`${ORDERBOOK_PATH}/orders/`, {
-      limit: this.pageSize,
-      offset: (page - 1) * this.pageSize,
-      ...query,
-    });
-
-    if (ORDERBOOK_VERSION == 0) {
-      const json = result as OrderJSON[];
-      return {
-        orders: json.map((j) => orderFromJSON(j)),
-        count: json.length,
-      };
-    } else {
-      const json = result as OrderbookResponse;
-      return {
-        orders: json.orders.map((j) => orderFromJSON(j)),
-        count: json.count,
-      };
-    }
   }
 
   /**
@@ -251,6 +323,15 @@ export class OpenSeaAPI {
       previous: json.previous,
       estimatedCount: json.estimated_count,
     };
+  }
+
+  /**
+   * Fetch a collection through the API
+   */
+  public async getCollection(slug: string): Promise<OpenSeaCollection> {
+    const path = getCollectionPath(slug);
+    const response = await this.get<GetCollectionResponse>(path);
+    return collectionFromJSON(response.collection);
   }
 
   /**
@@ -440,12 +521,12 @@ export class OpenSeaAPI {
         )}'`;
         break;
       case 500:
-        errorMessage = `Internal server error. OpenSea has been alerted, but if the problem persists please contact us via Discord: https://discord.gg/ga8EJbv - full message was ${JSON.stringify(
+        errorMessage = `Internal server error. OpenSea has been alerted, but if the problem persists please contact us via Discord: https://discord.gg/opensea - full message was ${JSON.stringify(
           result
         )}`;
         break;
       case 503:
-        errorMessage = `Service unavailable. Please try again in a few minutes. If the problem persists please contact us via Discord: https://discord.gg/ga8EJbv - full message was ${JSON.stringify(
+        errorMessage = `Service unavailable. Please try again in a few minutes. If the problem persists please contact us via Discord: https://discord.gg/opensea - full message was ${JSON.stringify(
           result
         )}`;
         break;

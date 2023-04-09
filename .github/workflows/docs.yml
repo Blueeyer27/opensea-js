@@ -10,24 +10,27 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
+      - uses: actions/checkout@v3
+      - uses: actions/setup-node@v3
         with:
-          node-version: "16.11.0"
-          cache: yarn
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Upgrade npm
+        run: npm install -g npm
 
       - name: Install dependencies
-        run: yarn install --immutable --ignore-scripts
+        run: npm install --immutable --ignore-scripts
 
       - name: Gen ABI
-        run: yarn abi-type-gen
+        run: npm run abi-type-gen
 
       - name: Build
-        run: yarn docs-build
+        run: npm run docs-build
 
       - name: Deploy 🚀
         if: github.ref == 'refs/heads/master'
-        uses: JamesIves/github-pages-deploy-action@4.1.7
+        uses: JamesIves/github-pages-deploy-action@v4.4.1
         with:
           branch: gh-pages
           folder: docs

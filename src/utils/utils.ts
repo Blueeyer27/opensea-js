@@ -1,20 +1,21 @@
+import {
+  CROSS_CHAIN_SEAPORT_ADDRESS,
+  CROSS_CHAIN_SEAPORT_V1_4_ADDRESS,
+  ItemType,
+} from "@opensea/seaport-js/lib/constants";
 import BigNumber from "bignumber.js";
-import { AbiType, CallData, TxData } from "ethereum-types";
+import BN from "bn.js";
+import { CallData, TxData } from "ethereum-types";
+import * as ethABI from "ethereumjs-abi";
 import * as ethUtil from "ethereumjs-util";
 import * as _ from "lodash";
+import { Buffer } from "safe-buffer";
 import Web3 from "web3";
-import { JsonRpcResponse } from "web3-core-helpers/types";
 import { AbstractProvider } from "web3-core/types";
+import { JsonRpcResponse } from "web3-core-helpers/types";
 import { Contract } from "web3-eth-contract";
-import { WyvernProtocol } from "wyvern-js";
-import {
-  AnnotatedFunctionABI,
-  FunctionInputKind,
-  FunctionOutputKind,
-  Network,
-  Schema,
-  StateMutability,
-} from "wyvern-schemas/dist/types";
+import { assert } from "./assert";
+import { Schema } from "./schemas/schema";
 import {
   ENJIN_ADDRESS,
   ENJIN_COIN_ADDRESS,
@@ -24,13 +25,21 @@ import {
   MERKLE_VALIDATOR_RINKEBY,
   NULL_ADDRESS,
   NULL_BLOCK_HASH,
+  SHARED_STOREFRONT_LAZY_MINT_ADAPTER_ADDRESS,
+  SHARED_STORE_FRONT_ADDRESS_MAINNET,
+  SHARED_STORE_FRONT_ADDRESS_RINKEBY,
 } from "../constants";
 import { ERC1155 } from "../contracts";
 import { ERC1155Abi } from "../typechain/contracts/ERC1155Abi";
 import {
+  AbiType,
+  AnnotatedFunctionABI,
   Asset,
   AssetEvent,
   ECSignature,
+  FunctionInputKind,
+  FunctionOutputKind,
+  Network,
   OpenSeaAccount,
   OpenSeaAsset,
   OpenSeaAssetBundle,
@@ -43,6 +52,8 @@ import {
   OrderJSON,
   OrderSide,
   SaleKind,
+  SolidityTypes,
+  StateMutability,
   Transaction,
   TxnCallback,
   UnhashedOrder,
@@ -54,8 +65,6 @@ import {
   WyvernNFTAsset,
   WyvernSchemaName,
 } from "../types";
-
-export { WyvernProtocol };
 
 export const annotateERC721TransferABI = (
   asset: WyvernNFTAsset
@@ -238,11 +247,6 @@ export const assetFromJSON = (asset: any): OpenSeaAsset => {
     backgroundColor: asset.background_color
       ? `#${asset.background_color}`
       : null,
-
-    transferFee: asset.transfer_fee ? makeBigNumber(asset.transfer_fee) : null,
-    transferFeePaymentToken: asset.transfer_fee_payment_token
-      ? tokenFromJSON(asset.transfer_fee_payment_token)
-      : null,
   };
   // If orders were included, put them in sell/buy order groups
   if (fromJSON.orders && !fromJSON.sellOrders) {
@@ -308,7 +312,7 @@ export const userFromJSON = (user: any): OpenSeaUser => {
 export const assetBundleFromJSON = (asset_bundle: any): OpenSeaAssetBundle => {
   const fromJSON: OpenSeaAssetBundle = {
     maker: asset_bundle.maker,
-    assets: asset_bundle.assets.map(assetFromJSON),
+    assets: asset_bundle.assets ? asset_bundle.assets.map(assetFromJSON) : [],
     assetContract: asset_bundle.asset_contract
       ? assetContractFromJSON(asset_bundle.asset_contract)
       : undefined,
@@ -376,6 +380,10 @@ export const collectionFromJSON = (collection: any): OpenSeaCollection => {
     traitStats: collection.traits as OpenSeaTraitStats,
     externalLink: collection.external_url,
     wikiLink: collection.wiki_url,
+    fees: {
+      openseaFees: new Map(Object.entries(collection.fees.opensea_fees || {})),
+      sellerFees: new Map(Object.entries(collection.fees.seller_fees || {})),
+    },
   };
 };
 
@@ -604,11 +612,13 @@ export async function isContractAddress(
   return code !== "0x";
 }
 
+export type BigNumberInput = number | string | BigNumber;
+
 /**
  * Special fixes for making BigNumbers using web3 results
  * @param arg An arg or the result of a web3 call to turn into a BigNumber
  */
-export function makeBigNumber(arg: number | string | BigNumber): BigNumber {
+export function makeBigNumber(arg: BigNumberInput): BigNumber {
   // Zero sometimes returned as 0x from contracts
   if (arg === "0x") {
     arg = 0;
@@ -953,7 +963,83 @@ export function getOrderHash(order: UnhashedOrder) {
     feeMethod: order.feeMethod.toString(),
   };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  return WyvernProtocol.getOrderHashHex(orderWithStringTypes as any);
+  return getOrderHashHex(orderWithStringTypes as any);
+}
+
+// sourced from: https://github.com/ProjectOpenSea/wyvern-js/blob/master/src/utils/utils.ts#L39
+function getOrderHashHex(order: UnhashedOrder): string {
+  const orderParts = [
+    { value: order.exchange, type: SolidityTypes.Address },
+    { value: order.maker, type: SolidityTypes.Address },
+    { value: order.taker, type: SolidityTypes.Address },
+    {
+      value: bigNumberToBN(order.makerRelayerFee),
+      type: SolidityTypes.Uint256,
+    },
+    {
+      value: bigNumberToBN(order.takerRelayerFee),
+      type: SolidityTypes.Uint256,
+    },
+    {
+      value: bigNumberToBN(order.makerProtocolFee),
+      type: SolidityTypes.Uint256,
+    },
+    {
+      value: bigNumberToBN(order.takerProtocolFee),
+      type: SolidityTypes.Uint256,
+    },
+    { value: order.feeRecipient, type: SolidityTypes.Address },
+    { value: order.feeMethod, type: SolidityTypes.Uint8 },
+    { value: order.side, type: SolidityTypes.Uint8 },
+    { value: order.saleKind, type: SolidityTypes.Uint8 },
+    { value: order.target, type: SolidityTypes.Address },
+    { value: order.howToCall, type: SolidityTypes.Uint8 },
+    {
+      value: Buffer.from(order.calldata.slice(2), "hex"),
+      type: SolidityTypes.Bytes,
+    },
+    {
+      value: Buffer.from(order.replacementPattern.slice(2), "hex"),
+      type: SolidityTypes.Bytes,
+    },
+    { value: order.staticTarget, type: SolidityTypes.Address },
+    {
+      value: Buffer.from(order.staticExtradata.slice(2), "hex"),
+      type: SolidityTypes.Bytes,
+    },
+    { value: order.paymentToken, type: SolidityTypes.Address },
+    { value: bigNumberToBN(order.basePrice), type: SolidityTypes.Uint256 },
+    { value: bigNumberToBN(order.extra), type: SolidityTypes.Uint256 },
+    { value: bigNumberToBN(order.listingTime), type: SolidityTypes.Uint256 },
+    { value: bigNumberToBN(order.expirationTime), type: SolidityTypes.Uint256 },
+    { value: bigNumberToBN(order.salt), type: SolidityTypes.Uint256 },
+  ];
+  const types = _.map(orderParts, (o) => o.type);
+  const values = _.map(orderParts, (o) => o.value);
+  const hash = Buffer.from(ethABI.soliditySHA3(types, values));
+  return ethUtil.bufferToHex(hash);
+}
+
+function bigNumberToBN(value: BigNumber) {
+  return new BN(value.toString(), 10);
+}
+
+// Sourced from: https://github.com/ProjectOpenSea/wyvern-js/blob/master/src/wyvernProtocol.ts#L170
+export function toBaseUnitAmount(
+  amount: BigNumber,
+  decimals: number
+): BigNumber {
+  assert.isBigNumber("amount", amount);
+  assert.isNumber("decimals", decimals);
+  const unit = new BigNumber(10).pow(decimals);
+  const baseUnitAmount = amount.times(unit);
+  const hasDecimals = baseUnitAmount.decimalPlaces() !== 0;
+  if (hasDecimals) {
+    throw new Error(
+      `Invalid unit amount: ${amount.toString()} - Too many decimal places`
+    );
+  }
+  return baseUnitAmount;
 }
 
 /**
@@ -1049,6 +1135,7 @@ export async function getNonCompliantApprovalAddress(
 export const merkleValidatorByNetwork = {
   [Network.Main]: MERKLE_VALIDATOR_MAINNET,
   [Network.Rinkeby]: MERKLE_VALIDATOR_RINKEBY,
+  [Network.Goerli]: null,
 };
 
 /**
@@ -1058,9 +1145,83 @@ export const merkleValidatorByNetwork = {
 export const getMaxOrderExpirationTimestamp = () => {
   const maxExpirationDate = new Date();
 
-  maxExpirationDate.setDate(
-    maxExpirationDate.getDate() + MAX_EXPIRATION_MONTHS
+  maxExpirationDate.setMonth(
+    maxExpirationDate.getMonth() + MAX_EXPIRATION_MONTHS
   );
+  maxExpirationDate.setDate(maxExpirationDate.getDate() - 1);
 
   return Math.round(maxExpirationDate.getTime() / 1000);
+};
+
+interface ErrorWithCode extends Error {
+  code: string;
+}
+
+export const hasErrorCode = (error: unknown): error is ErrorWithCode => {
+  const untypedError = error as Partial<ErrorWithCode>;
+  return !!untypedError.code;
+};
+
+export const getAssetItemType = (schemaName?: WyvernSchemaName) => {
+  switch (schemaName) {
+    case "ERC20":
+      return ItemType.ERC20;
+    case "ERC721":
+      return ItemType.ERC721;
+    case "ERC1155":
+      return ItemType.ERC1155;
+    default:
+      throw new Error(`Unknown schema name: ${schemaName}`);
+  }
+};
+
+const SHARED_STOREFRONT_ADDRESSES = new Set([
+  SHARED_STORE_FRONT_ADDRESS_MAINNET.toLowerCase(),
+  SHARED_STORE_FRONT_ADDRESS_RINKEBY.toLowerCase(),
+]);
+
+/**
+ * Checks if the token address is the shared storefront address and if so replaces
+ * that address with the lazy mint adapter addres. Otherwise, returns the input token address
+ * @param tokenAddress token address
+ * @returns input token address or lazy mint adapter address
+ */
+export const getAddressAfterRemappingSharedStorefrontAddressToLazyMintAdapterAddress =
+  (tokenAddress: string): string => {
+    return SHARED_STOREFRONT_ADDRESSES.has(tokenAddress.toLowerCase())
+      ? SHARED_STOREFRONT_LAZY_MINT_ADAPTER_ADDRESS
+      : tokenAddress;
+  };
+
+/**
+ * Sums up the basis points for an Opensea or seller fee map and returns the
+ * single numeric value if the map is not empty. Otherwise, it returns 0
+ * @param fees a `Fees` submap holding fees (either Fees.openseaFees
+ *  or Fees.sellerFees)
+ * @returns sum of basis points in a fee map
+ */
+export const feesToBasisPoints = (
+  fees: Map<string, number> | undefined
+): number => {
+  if (!fees) {
+    return 0;
+  }
+
+  return Array.from(fees.values()).reduce(
+    (sum, basisPoints) => basisPoints + sum,
+    0
+  );
+};
+
+/**
+ * checks protocol address
+ * @param protocolAddress a protocol address
+ */
+export const isValidProtocol = (protocolAddress: string): boolean => {
+  const checkSumAddress = Web3.utils.toChecksumAddress(protocolAddress);
+  const validProtocolAddresses = [
+    CROSS_CHAIN_SEAPORT_ADDRESS,
+    CROSS_CHAIN_SEAPORT_V1_4_ADDRESS,
+  ].map((address) => Web3.utils.toChecksumAddress(address));
+  return validProtocolAddresses.includes(checkSumAddress);
 };

@@ -1,17 +1,7 @@
 /* eslint-disable import/no-unused-modules */
 import BigNumber from "bignumber.js";
 import { AbiItem } from "web3-utils";
-import {
-  ECSignature,
-  HowToCall,
-  Network,
-  Order as WyvernOrder,
-  WyvernProtocolConfig,
-} from "wyvern-js/lib/types";
-import type { Token } from "wyvern-schemas/dist/types";
-
-export { HowToCall, Network };
-export type { ECSignature };
+import type { OrderV2 } from "./orders/types";
 
 /**
  * Events emitted by the SDK. There are five types:
@@ -81,6 +71,7 @@ export interface EventData {
   error?: unknown;
 
   order?: Order | UnsignedOrder;
+  orderV2?: OrderV2;
   buy?: Order;
   sell?: Order;
   matchMetadata?: string;
@@ -104,12 +95,25 @@ export interface OpenSeaAPIConfig {
   wyvernConfig?: WyvernConfig;
 }
 
-export type WyvernConfig = WyvernProtocolConfig & {
+export enum Network {
+  Main = "main",
+  Goerli = "goerli",
+  Rinkeby = "rinkeby",
+}
+
+export type WyvernConfig = {
+  network: Network;
+  gasPrice?: BigNumber;
+  wyvernExchangeContractAddress?: string;
+  wyvernProxyRegistryContractAddress?: string;
+  wyvernDAOContractAddress?: string;
+  wyvernTokenContractAddress?: string;
+  wyvernAtomicizerContractAddress?: string;
   wyvernTokenTransferProxyContractAddress?: string;
 };
 
 /**
- * Wyvern order side: buy or sell.
+ * Seaport order side: buy or sell.
  */
 export enum OrderSide {
   Buy = 0,
@@ -179,6 +183,12 @@ export enum TokenStandardVersion {
   ERC721v3 = "3.0",
 }
 
+// Collection fees mapping recipient address to basis points
+export interface Fees {
+  openseaFees: Map<string, number>;
+  sellerFees: Map<string, number>;
+}
+
 export interface WyvernNFTAsset {
   id: string;
   address: string;
@@ -231,7 +241,7 @@ export interface OpenSeaAccount {
 
 export interface OpenSeaUser {
   // Username for this user
-  username: string;
+  username?: string;
 }
 
 /**
@@ -334,6 +344,8 @@ export interface OpenSeaCollection extends OpenSeaFees {
   externalLink?: string;
   // Link to the collection's wiki, if available
   wikiLink?: string;
+  // Map of collection fees holding OpenSea and seller fees
+  fees: Fees;
 }
 
 export interface OpenSeaTraitStats {
@@ -382,10 +394,6 @@ export interface OpenSeaAsset extends Asset {
   lastSale: AssetEvent | null;
   // The suggested background color for the image url
   backgroundColor: string | null;
-  // The per-transfer fee, in base units, for this asset in its transfer method
-  transferFee: BigNumber | string | null;
-  // The transfer fee token for this asset in its transfer method
-  transferFeePaymentToken: OpenSeaFungibleToken | null;
 }
 
 /**
@@ -472,7 +480,11 @@ export interface Transaction {
 /**
  * Full annotated Fungible Token spec with OpenSea metadata
  */
-export interface OpenSeaFungibleToken extends Token {
+export interface OpenSeaFungibleToken {
+  name: string;
+  symbol: string;
+  decimals: number;
+  address: string;
   imageUrl?: string;
   ethPrice?: string;
   usdPrice?: string;
@@ -518,7 +530,6 @@ export interface OpenSeaAssetBundleQuery
   owner?: string;
   offset?: number;
   limit?: number;
-  search?: string;
 }
 
 /**
@@ -542,14 +553,6 @@ export interface ComputedFees extends OpenSeaFees {
   // Total fees. dev + opensea
   totalBuyerFeeBasisPoints: number;
   totalSellerFeeBasisPoints: number;
-
-  // Fees that the item's creator takes on every transfer
-  transferFee: BigNumber;
-  transferFeeTokenAddress: string | null;
-
-  // Fees that go to whoever refers the order to the taker.
-  // Comes out of OpenSea fees
-  sellerBountyBasisPoints: number;
 }
 
 interface ExchangeMetadataForAsset {
@@ -567,7 +570,27 @@ export type ExchangeMetadata =
   | ExchangeMetadataForAsset
   | ExchangeMetadataForBundle;
 
-export interface UnhashedOrder extends WyvernOrder {
+export interface UnhashedOrder {
+  exchange: string;
+  maker: string;
+  taker: string;
+  makerRelayerFee: BigNumber;
+  takerRelayerFee: BigNumber;
+  makerProtocolFee: BigNumber;
+  takerProtocolFee: BigNumber;
+  feeRecipient: string;
+  target: string;
+  calldata: string;
+  replacementPattern: string;
+  staticTarget: string;
+  staticExtradata: string;
+  paymentToken: string;
+  basePrice: BigNumber;
+  extra: BigNumber;
+  listingTime: BigNumber;
+  expirationTime: BigNumber;
+  salt: BigNumber;
+
   feeMethod: FeeMethod;
   side: OrderSide;
   saleKind: SaleKind;
@@ -582,8 +605,21 @@ export interface UnhashedOrder extends WyvernOrder {
   metadata: ExchangeMetadata;
 }
 
+export enum HowToCall {
+  Call = 0,
+  DelegateCall = 1,
+  StaticCall = 2,
+  Create = 3,
+}
+
 export interface UnsignedOrder extends UnhashedOrder {
   hash?: string;
+}
+
+export interface ECSignature {
+  v: number;
+  r: string;
+  s: string;
 }
 
 /**
@@ -670,6 +706,7 @@ export type RawWyvernOrderJSON = Omit<
 export interface OrderQuery extends Partial<OrderJSON> {
   owner?: string;
   sale_kind?: SaleKind;
+  side?: OrderSide;
   asset_contract_address?: string;
   payment_token_address?: string;
   is_english?: boolean;
@@ -693,7 +730,6 @@ export interface OpenSeaAssetQuery {
   owner?: string;
   asset_contract_address?: string;
   token_ids?: Array<number | string>;
-  search?: string;
   order_by?: string;
   order_direction?: string;
   limit?: number;
@@ -722,3 +758,67 @@ export type Web3Callback<T> = (err: Error | null, result: T) => void;
 export type TxnCallback = (result: boolean) => void;
 
 export type PartialReadonlyContractAbi = AbiItem[];
+
+// Types extracted from wyvern-js: https://github.com/ProjectOpenSea/wyvern-js#7429b1f2dd123f012cae1f3144a069e91ecd0682
+export interface AnnotatedFunctionABI {
+  type: AbiType;
+  name: string;
+  target: string;
+  inputs: AnnotatedFunctionInput[];
+  outputs: AnnotatedFunctionOutput[];
+  constant: boolean;
+  stateMutability: StateMutability;
+  payable: boolean;
+}
+
+export enum AbiType {
+  Function = "function",
+  Constructor = "constructor",
+  Event = "event",
+  Fallback = "fallback",
+}
+
+export interface AnnotatedFunctionInput {
+  name: string;
+  type: string;
+  kind: FunctionInputKind;
+  value?: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+}
+
+export interface AnnotatedFunctionOutput {
+  name: string;
+  type: string;
+  kind: FunctionOutputKind;
+}
+
+export enum FunctionInputKind {
+  Replaceable = "replaceable",
+  Asset = "asset",
+  Owner = "owner",
+  Index = "index",
+  Count = "count",
+  Data = "data",
+}
+
+export enum FunctionOutputKind {
+  Owner = "owner",
+  Asset = "asset",
+  Count = "count",
+  Other = "other",
+}
+
+export enum StateMutability {
+  Pure = "pure",
+  View = "view",
+  Payable = "payable",
+  Nonpayable = "nonpayable",
+}
+
+export enum SolidityTypes {
+  Address = "address",
+  Uint256 = "uint256",
+  Uint8 = "uint8",
+  Uint = "uint",
+  Bytes = "bytes",
+  String = "string",
+}
