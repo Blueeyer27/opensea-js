@@ -87,6 +87,7 @@ export interface EventData {
 export interface OpenSeaAPIConfig {
   networkName?: Network;
   apiKey?: string;
+  proxy?: string;
   apiBaseUrl?: string;
   useReadOnlyProvider?: boolean;
   // Sent to WyvernJS

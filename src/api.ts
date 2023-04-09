@@ -1,6 +1,8 @@
 import "isomorphic-unfetch";
 import _ from "lodash";
+import fetch, { RequestInit, Response } from "node-fetch";
 import * as QueryString from "query-string";
+import { SocksProxyAgent } from "socks-proxy-agent";
 import { API_BASE_MAINNET, API_BASE_TESTNET, API_PATH } from "./constants";
 import {
   BuildOfferResponse,
@@ -63,6 +65,7 @@ export class OpenSeaAPI {
   public logger: (arg: string) => void;
 
   private apiKey: string | undefined;
+  private proxy: string | undefined;
   private networkName: Network;
   private retryDelay = 3000;
 
@@ -73,6 +76,7 @@ export class OpenSeaAPI {
    */
   constructor(config: OpenSeaAPIConfig, logger?: (arg: string) => void) {
     this.apiKey = config.apiKey;
+    this.proxy = config.proxy;
     this.networkName = config.networkName ?? Network.Main;
 
     switch (config.networkName) {
@@ -413,7 +417,7 @@ export class OpenSeaAPI {
     const url = `${apiPath}?${qs}`;
 
     const response = await this._fetch(url);
-    return response.json();
+    return response.json() as T;
   }
 
   /**
@@ -439,7 +443,7 @@ export class OpenSeaAPI {
     };
 
     const response = await this._fetch(apiPath, fetchOpts);
-    return response.json();
+    return response.json() as T;
   }
 
   /**
@@ -464,6 +468,7 @@ export class OpenSeaAPI {
   private async _fetch(apiPath: string, opts: RequestInit = {}) {
     const apiBase = this.apiBaseUrl;
     const apiKey = this.apiKey;
+    const proxy = this.proxy;
     const finalUrl = apiBase + apiPath;
     const finalOpts = {
       ...opts,
@@ -472,6 +477,10 @@ export class OpenSeaAPI {
         ...(opts.headers || {}),
       },
     };
+
+    if (proxy) {
+      finalOpts.agent = new SocksProxyAgent(proxy);
+    }
 
     this.logger(
       `Sending request: ${finalUrl} ${JSON.stringify(finalOpts).substr(
