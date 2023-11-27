@@ -744,6 +744,72 @@ export class OpenSeaSDK {
     }));
   }
 
+  public async createBuyOrderAdvanced({
+    asset,
+    accountAddress,
+    startAmount,
+    paymentTokenDecimals,
+    paymentTokenAddress,
+    considerationAssetItems,
+    openseaSellerFees,
+    collectionSellerFees,
+    domain,
+    salt,
+    expirationTime,
+  }: {
+    asset: Asset;
+    accountAddress: string;
+    startAmount: BigNumberInput;
+    paymentTokenDecimals: number;
+    paymentTokenAddress: string;
+    considerationAssetItems: CreateInputItem[];
+    openseaSellerFees: ConsiderationInputItem[];
+    collectionSellerFees: ConsiderationInputItem[];
+    domain?: string;
+    salt?: string;
+    expirationTime?: BigNumberInput;
+  }): Promise<OrderV2> {
+    if (!asset.tokenId) {
+      throw new Error("Asset must have a tokenId");
+    }
+
+    const basePrice = toBaseUnitAmount(
+      makeBigNumber(startAmount),
+      paymentTokenDecimals
+    );
+    const { executeAllActions } = await this.seaport_v1_5.createOrder(
+      {
+        offer: [
+          {
+            token: paymentTokenAddress,
+            amount: basePrice.toString(),
+          },
+        ],
+        consideration: [
+          ...considerationAssetItems,
+          ...openseaSellerFees,
+          ...collectionSellerFees,
+        ],
+        endTime:
+          expirationTime?.toString() ??
+          getMaxOrderExpirationTimestamp().toString(),
+        zone: DEFAULT_ZONE_BY_NETWORK[this._networkName],
+        domain,
+        salt,
+        restrictedByZone: false,
+        allowPartialFills: true,
+      },
+      accountAddress
+    );
+    const order = await executeAllActions();
+
+    return this.api.postOrder(order, {
+      protocol: "seaport",
+      protocolAddress: DEFAULT_SEAPORT_CONTRACT_ADDRESS,
+      side: "bid",
+    });
+  }
+
   /**
    * Create a buy order to make an offer on an asset.
    * @param options Options for creating the buy order
